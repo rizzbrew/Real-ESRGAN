@@ -1,13 +1,13 @@
 import os
 import shutil
 import torch
-from torch.nn import functional as F
 from PIL import Image
 import numpy as np
 from huggingface_hub import hf_hub_download
 
 from .rrdbnet_arch import RRDBNet
 from .utils import pad_reflect, split_image_into_overlapping_patches, stich_together, unpad_image
+
 
 HF_MODELS = {
     2: dict(
@@ -35,24 +35,25 @@ class RealESRGAN:
 
     def load_weights(self, model_path, download=True):
         if not os.path.exists(model_path) and download:
-            assert self.scale in [2, 4, 8], 'Only supports scale 2, 4, or 8'
+            assert self.scale in [2, 4, 8], 'Download models only with scales: 2, 4, 8'
             config = HF_MODELS[self.scale]
-            local_filename = os.path.basename(model_path)
+            cache_dir = os.path.dirname(model_path)
+            os.makedirs(cache_dir, exist_ok=True)  # pastikan folder ada
 
-            # Download dari Hugging Face ke cache
             downloaded_path = hf_hub_download(
                 repo_id=config['repo_id'],
                 filename=config['filename'],
+                cache_dir=cache_dir,
+                local_dir_use_symlinks=False
             )
 
-            # Buat folder tujuan jika belum ada
-            os.makedirs(os.path.dirname(model_path), exist_ok=True)
+            # Pindahkan file ke model_path jika beda
+            if downloaded_path != model_path:
+                shutil.move(downloaded_path, model_path)
 
-            # Pindahkan file dari cache ke lokasi yang diinginkan
-            shutil.move(downloaded_path, model_path)
-            print("Weights downloaded to:", model_path)
+            print('Weights downloaded to:', model_path)
 
-        loadnet = torch.load(model_path)
+        loadnet = torch.load(model_path, map_location=self.device)
         if 'params' in loadnet:
             self.model.load_state_dict(loadnet['params'], strict=True)
         elif 'params_ema' in loadnet:
@@ -63,7 +64,7 @@ class RealESRGAN:
         self.model.eval()
         self.model.to(self.device)
 
-    @torch.amp.autocast(device_type='cuda' if torch.cuda.is_available() else 'cpu')
+    @torch.cuda.amp.autocast()
     def predict(self, lr_image, batch_size=4, patches_size=192,
                 padding=24, pad_size=15):
         scale = self.scale
@@ -79,7 +80,7 @@ class RealESRGAN:
         with torch.no_grad():
             res = self.model(img[0:batch_size])
             for i in range(batch_size, img.shape[0], batch_size):
-                res = torch.cat((res, self.model(img[i:i+batch_size])), 0)
+                res = torch.cat((res, self.model(img[i:i + batch_size])), 0)
 
         sr_image = res.permute((0, 2, 3, 1)).clamp_(0, 1).cpu()
         np_sr_image = sr_image.numpy()
@@ -87,11 +88,11 @@ class RealESRGAN:
         padded_size_scaled = tuple(np.multiply(p_shape[0:2], scale)) + (3,)
         scaled_image_shape = tuple(np.multiply(lr_image.shape[0:2], scale)) + (3,)
         np_sr_image = stich_together(
-            np_sr_image,
-            padded_image_shape=padded_size_scaled,
-            target_shape=scaled_image_shape,
-            padding_size=padding * scale
+            np_sr_image, padded_image_shape=padded_size_scaled,
+            target_shape=scaled_image_shape, padding_size=padding * scale
         )
         sr_img = (np_sr_image * 255).astype(np.uint8)
         sr_img = unpad_image(sr_img, pad_size * scale)
-        return Image.fromarray(sr_img)
+        sr_img = Image.fromarray(sr_img)
+
+        return sr_img

@@ -4,7 +4,6 @@ import torch
 from torch.nn import functional as F
 from PIL import Image
 import numpy as np
-import cv2
 from huggingface_hub import hf_hub_download
 
 from .rrdbnet_arch import RRDBNet
@@ -30,7 +29,7 @@ class RealESRGAN:
         self.device = device
         self.scale = scale
         self.model = RRDBNet(
-            num_in_ch=3, num_out_ch=3, num_feat=64, 
+            num_in_ch=3, num_out_ch=3, num_feat=64,
             num_block=23, num_grow_ch=32, scale=scale
         )
 
@@ -40,7 +39,7 @@ class RealESRGAN:
             config = HF_MODELS[self.scale]
             local_filename = os.path.basename(model_path)
 
-            # Download dari HuggingFace Hub
+            # Download dari Hugging Face ke cache
             downloaded_path = hf_hub_download(
                 repo_id=config['repo_id'],
                 filename=config['filename'],
@@ -50,11 +49,13 @@ class RealESRGAN:
             # Buat folder tujuan jika belum ada
             os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
-            # Salin dari cache ke lokasi model_path
-            shutil.copy(downloaded_path, model_path)
-            print('Weights downloaded to:', model_path)
+            # Pindahkan file dari cache ke lokasi yang diinginkan
+            shutil.move(downloaded_path, model_path)
+            print("Weights downloaded to:", model_path)
 
-        # Load model
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+
         loadnet = torch.load(model_path)
         if 'params' in loadnet:
             self.model.load_state_dict(loadnet['params'], strict=True)
@@ -97,6 +98,4 @@ class RealESRGAN:
         )
         sr_img = (np_sr_image * 255).astype(np.uint8)
         sr_img = unpad_image(sr_img, pad_size * scale)
-        sr_img = Image.fromarray(sr_img)
-
-        return sr_img
+        return Image.fromarray(sr_img)

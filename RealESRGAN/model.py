@@ -43,7 +43,6 @@ class RealESRGAN:
             downloaded_path = hf_hub_download(
                 repo_id=config['repo_id'],
                 filename=config['filename'],
-                local_dir_use_symlinks=False
             )
 
             # Buat folder tujuan jika belum ada
@@ -52,9 +51,6 @@ class RealESRGAN:
             # Pindahkan file dari cache ke lokasi yang diinginkan
             shutil.move(downloaded_path, model_path)
             print("Weights downloaded to:", model_path)
-
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file not found: {model_path}")
 
         loadnet = torch.load(model_path)
         if 'params' in loadnet:
@@ -67,7 +63,7 @@ class RealESRGAN:
         self.model.eval()
         self.model.to(self.device)
 
-    @torch.amp.autocast(device_type='cuda')
+    @torch.amp.autocast(device_type='cuda' if torch.cuda.is_available() else 'cpu')
     def predict(self, lr_image, batch_size=4, patches_size=192,
                 padding=24, pad_size=15):
         scale = self.scale
